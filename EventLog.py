@@ -2,33 +2,23 @@ import gzip
 import os
 import logging
 import sqlite3
+import hashlib
 try:
     import xml.etree.cElementTree as ElTree
 except ImportError:
     import xml.etree.ElementTree as ElTree
 
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
-                    datefmt='%a, %d %b %Y %H:%M:%S',
-                    filename=r'./main.log',
-                    filemode='w')
-# define a stream that will show log level > Warning on screen also
-console = logging.StreamHandler()
-console.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(levelname)-8s %(message)s')
-console.setFormatter(formatter)
-logging.getLogger('').addHandler(console)
-
 
 class EventLog:
     Database_Name = "EventLog.sqlite3.db"
 
-    def __init__(self, filename=r"./data/a.gz"):
+    def __init__(self, filename):
         if not os.path.isfile(self.Database_Name):
             self.create_database()
             logging.info("database created.")
         else:
             logging.info("database already exists.")
+
         self.Node = []
         self.Severity = []
         self.DateTime = []
@@ -44,10 +34,19 @@ class EventLog:
         self.ThreadName = []
         self.AppDomain = []
         self.ClusterId = []
+
+        self.FileHash = ""
+        self.FileHashes = []
         try:
             self.XmlStream = gzip.GzipFile(mode="rb",
                                            fileobj=open(filename, 'rb')
                                            ).read()
+            self.read_hash_table()
+            self.FileHash = self.get_hash()
+            print(self.FileHash)
+            if self.FileHash in self.FileHashes:
+                logging.error("File already analyzed and in database. skip the file")
+                return
             self.parse()
             self.insert_data()
         except Exception as e:
@@ -74,6 +73,10 @@ class EventLog:
                                thread_name TEXT,
                                app_domain TEXT,
                                cluster_id TEXT);'''
+            sql_cursor.execute(sql_string)
+            sql_string = '''create table file_hashes(
+                                hash TEXT PRIMARY KEY
+                                )'''
             sql_cursor.execute(sql_string)
             logging.info(r"Database and Table created")
             con.close()
@@ -149,10 +152,44 @@ class EventLog:
             logging.error(str(e))
             con.close()
             return
+        sql_string1 = r"insert into file_hashes values (?);"
+        try:
+            sql_cursor.execute(sql_string1, (self.FileHash,))
+        except sqlite3.Error as e:
+            logging.error(str(e))
+            con.close()
         con.commit()
         logging.info(r"Insert record done.")
         con.close()
 
+    def get_hash(self):
+        md5obj = hashlib.md5()
+        md5obj.update(self.XmlStream)
+        _hash = md5obj.hexdigest()
+        logging.debug("Cacluated hash:"+_hash)
+        return _hash
+
+    def read_hash_table(self):
+
+        conn = sqlite3.connect(self.Database_Name)
+        c = conn.cursor()
+
+        cursor = c.execute("SELECT hash from file_hashes")
+        for row in cursor:
+            self.FileHashes.append(row[0])
+        conn.close()
+
 
 if __name__ == '__main__':
-    a = EventLog()
+    print("please do not use it individually unless of debugging.")
+    logging.basicConfig(level=logging.DEBUG,
+                        format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
+                        datefmt='%a, %d %b %Y %H:%M:%S',
+                        filename=r'./main.log',
+                        filemode='w')
+    # define a stream that will show log level > Warning on screen also
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(levelname)-8s %(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
